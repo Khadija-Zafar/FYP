@@ -1,0 +1,108 @@
+import React, { useEffect, useState } from 'react';
+import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+
+const HealthScreen = () => {
+  const [imageUrl, setImageUrl] = useState(null);
+  const [prediction, setPrediction] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const fetchAndDiagnoseImage = async () => {
+    try {
+      // Step 1: Get latest image from your PHP endpoint
+      const response = await fetch("http://192.168.100.22/smart_irrigation/latest_image.php");
+      const data = await response.json();
+
+      const remoteImageUrl = data.url;
+      const fileName = data.file_name;
+      setImageUrl(remoteImageUrl);
+
+      // Step 2: Download image locally
+      const fileUri = FileSystem.documentDirectory + fileName;
+      const downloadRes = await FileSystem.downloadAsync(remoteImageUrl, fileUri);
+
+      // Step 3: Upload the downloaded file to the API
+      const formData = new FormData();
+      formData.append('file', {
+        uri: downloadRes.uri,
+        name: fileName,
+        type: 'image/jpeg',
+      });
+
+      const predictionRes = await fetch("https://tomato-disease-api-deh7b7aphne3d6hz.southeastasia-01.azurewebsites.net/predict", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        body: formData,
+      });
+
+      const text = await predictionRes.text(); // Get raw text response
+
+      // Try to parse JSON only if response is valid
+      let predictionData;
+      try {
+        predictionData = JSON.parse(text);
+        if (predictionData.predictions && predictionData.predictions[0]) {
+          // Process the predictions
+          const classes = [
+            'Bacterial spot', 'Early blight', 'Late blight', 'Leaf Mold', 'Septoria leaf spot', 
+            'Spider mites', 'Target Spot', 'Yellow Leaf Curl Virus', 'Mosaic virus', 'Healthy',
+          ];
+          const probs = predictionData.predictions[0];
+          const maxIdx = probs.indexOf(Math.max(...probs));
+          setPrediction(`${classes[maxIdx]} (${(probs[maxIdx] * 100).toFixed(2)}%)`);
+        } else {
+          setPrediction("Prediction failed: No predictions returned");
+        }
+      } catch (jsonErr) {
+        console.error("JSON parse failed:", jsonErr);
+        setPrediction("Diagnosis failed: Invalid response format");
+      }
+    } catch (error) {
+      console.error("Diagnosis error:", error);
+      setPrediction("Diagnosis failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAndDiagnoseImage();
+  }, []);
+
+  if (loading) {
+    return <ActivityIndicator style={{ marginTop: 40 }} size="large" />;
+  }
+
+  return (
+    <View style={styles.container}>
+      {imageUrl && (
+        <Image source={{ uri: imageUrl }} style={styles.image} resizeMode="cover" />
+      )}
+      <Text style={styles.resultText}>Diagnosis: {prediction}</Text>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    alignItems: 'center',
+    paddingTop: 40,
+    backgroundColor: '#fff',
+    flex: 1,
+  },
+  image: {
+    width: 300,
+    height: 300,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  resultText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+});
+
+export default HealthScreen;
